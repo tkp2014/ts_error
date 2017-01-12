@@ -38,6 +38,21 @@
 #include "mpeg.h"
 #include "isom.h"
 
+
+/*By tony*/
+#define TS_DEBUG 1
+#define ETR290_DEBUG 1
+
+/* ETR290 error detection*/
+static int sync_error;
+static unsigned long long sync_count;
+static unsigned long long sync_loss_count;
+
+/*By tony*/
+
+
+
+
 /* maximum size in which we look for synchronisation if
  * synchronisation is lost */
 #define MAX_RESYNC_SIZE 65536
@@ -2196,9 +2211,17 @@ static int handle_packet(MpegTSContext *ts, const uint8_t *packet)
 
     tss->last_cc = cc;
     if (!cc_ok) {
+//        av_log(ts->stream, AV_LOG_DEBUG,
+//               "Continuity check failed for pid %d expected %d got %d\n",
+//               pid, expected_cc, cc);
+
+	/* ETR290: continuity_count_error check */
+#if ETR290_DEBUG
         av_log(ts->stream, AV_LOG_DEBUG,
-               "Continuity check failed for pid %d expected %d got %d\n",
+               "1.4 - ERROR - Continuity_count_error for pid %d expected %d got %d\n",
                pid, expected_cc, cc);
+#endif
+
         if (tss->type == MPEGTS_PES) {
             PESContext *pc = tss->u.pes_filter.opaque;
             pc->flags |= AV_PKT_FLAG_CORRUPT;
@@ -2355,6 +2378,17 @@ static int read_packet(AVFormatContext *s, uint8_t *buf, int raw_packet_size,
             return len < 0 ? len : AVERROR_EOF;
         /* check packet sync byte */
         if ((*data)[0] != 0x47) {
+#if ETR290_DEBUG
+            /*ETR290: sync byte error */
+            av_log(s, AV_LOG_ERROR, "1.2 - ERROR - Sync_byte_error\n");
+            if (sync_error>1 && sync_count>=5) {
+                av_log(s, AV_LOG_ERROR, "1.1 - ERROR - Ts_sync_loss - %lld consecutive sync loss errors\n",
+                       sync_loss_count+1);
+                sync_loss_count++;
+            }
+            sync_error++;
+#endif
+
             /* find a new packet start */
             uint64_t pos = avio_tell(pb);
             avio_seek(pb, -FFMIN(raw_packet_size, pos), SEEK_CUR);
@@ -2364,6 +2398,13 @@ static int read_packet(AVFormatContext *s, uint8_t *buf, int raw_packet_size,
             else
                 continue;
         } else {
+#if ETR290_DEBUG
+            if (sync_count >= 5) {
+                sync_error = 0;
+            }
+            sync_count++;
+#endif
+
             break;
         }
     }
